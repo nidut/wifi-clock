@@ -1,2 +1,6 @@
 # wifi-clock
-a seven segment clock with wifi connected clock with 7-segment look
+DIY project creating a wifi connected clock with seven segment look for the living room.
+
+Based on:
+- ESP8266 controller
+- WS2812B LED strip
