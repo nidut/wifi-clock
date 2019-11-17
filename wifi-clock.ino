@@ -13,6 +13,10 @@
 #include <ESP8266WiFi.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include "wifi_credentials.h"
+// wifi_crendentials.h contains:
+//const char* ssid     = "*********";
+//const char* password = "*********";
 
 /* LED Strip */
 #define LED_PIN   D1
@@ -56,10 +60,6 @@ const uint32_t COLOR_GREEN = strip.Color(0, 255, 0);
 const uint32_t COLOR_BLUE = strip.Color(0, 0, 255);
 const uint32_t COLOR_WHITE = strip.Color(255, 255, 255);
 const uint32_t COLOR_MAGENTA = strip.Color(255, 0, 255);
-
-/* Wifi */
-const char* ssid     = "*********";
-const char* password = "*********";
 
 /* NTP Client */
 WiFiUDP ntpUDP;
@@ -227,52 +227,30 @@ bool isEuropeanSummerTime(String formattedDate)
   int month = formattedDate.substring(5, 7).toInt();
   int day = formattedDate.substring(8, 10).toInt();
   int hour = formattedDate.substring(11, 13).toInt();
-  if (month < 3 || month > 10)
+  if (month >= 3 && month <= 10)
   {
-    //Jan, Feb, Nov, Dez -> no Summertime
-    return false;
-  }
-  else if (month > 3 && month < 10)
-  {
-    //April to September -> Summertime
-    return true;
-  }
-  else
-  {
-    //March or October 
     if (month == 3)
     {
       // start in March
       int startday = (31-((((5*year)/4)+4)%7));
-      if (day > startday)
+      if (day > startday || (day==startday && hour >= 1))
       {
         return true;
       }
-      else if (day==startday && hour >= 1)
+    }
+    else if (month == 10)
+    {
+      // end in October
+      int endday = (31-((((5*year)/4)+1)%7));
+      if (day < endday || (day == endday && hour < 1))
       {
         return true;
-      }
-      else
-      {
-        return false;
       }
     }
     else
     {
-      // end in October
-      int endday = (31-((((5*year)/4)+1)%7));
-      if (day < endday)
-      {
-        return true;
-      }
-      else if (day == endday && hour < 1)
-      {
-        return true;
-      }
-      else
-      {
-        return false;
-      }
+      return true;  
     }
   }
+  return false;
 }
