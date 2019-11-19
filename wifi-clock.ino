@@ -33,8 +33,9 @@ typedef uint32_t DIGIT[7];
 struct display {
     DIGIT digits[4];  
     char dots[2];
-    int brightness;
-    uint32_t color;
+    int brightness = 50;
+    uint32_t color = COLOR_RED;
+    int updateRate = 500; // in ms
 } myDisplay;
 // define digits 0-9
 DIGIT numbers[10] =
@@ -66,6 +67,9 @@ const int CET_OFFSET = 3600;
 const int CEST_OFFSET = 7200;
 int time_digits[4];
 int date_digits[4];
+int timeZoneUpdateRate = 3600; // in seconds
+
+uint32_t loop_cnt = 0;
 
 void setup() {
   /* Init LEDs */  
@@ -90,34 +94,27 @@ void setup() {
   
   /* Init NTPClient */
   timeClient.begin();
-  // set timezone offset (including summer time)
-  updateTimeZone();
 }
 
 void loop() {
-  // update TimeZone e.g. every hour
-  //updateTimeZone();
+  if(loop_cnt*myDisplay.updateRate/1000 % timeZoneUpdateRate == 0)
+  {
+    // update TimeZone every hour
+    updateTimeZone();
+  }
   // update time_digits and date_digits
   updateDateTime();
   // set the display according to the current time
   setTimeDisplay();
-  // Debug time
-  Serial.print("Time:");
-  for (int i=0; i<4;i++)
-  {
-    for(int j=0; j<7;j++)
-    {
-     Serial.print(myDisplay.digits[i][j]); 
-    }
-    Serial.print(" ");
-  }
-  Serial.println("");
+  // print debug info to serial monitor
+  printDebug();
+  // set the rest of the display
   myDisplay.color = COLOR_RED;
   myDisplay.brightness = 50;
-  
   // write to display
   writeDisplay(myDisplay);
-  delay(500);
+  delay(myDisplay.updateRate);
+  loop_cnt++;
 }
 
 void updateDateTime()
@@ -225,30 +222,54 @@ bool isEuropeanSummerTime(String formattedDate)
   int month = formattedDate.substring(5, 7).toInt();
   int day = formattedDate.substring(8, 10).toInt();
   int hour = formattedDate.substring(11, 13).toInt();
-  if (month >= 3 && month <= 10)
-  {
-    if (month == 3)
+  
+  switch (month)  
+  { 
+  case 1 ... 2:
+    // January or February
+    return false;
+  case 3:
+    // March
+    int startday = (31-((((5*year)/4)+4)%7));
+    if (day > startday || (day==startday && hour >= 1))
     {
-      // start in March
-      int startday = (31-((((5*year)/4)+4)%7));
-      if (day > startday || (day==startday && hour >= 1))
-      {
-        return true;
-      }
+      // Summer time has already started
+      return true;
     }
-    else if (month == 10)
+    break;
+  case 4 ... 9: 
+    // April until September
+    return true;
+  case 10:
+    // October
+    int endday = (31-((((5*year)/4)+1)%7));
+    if (day < endday || (day == endday && hour < 1))
     {
-      // end in October
-      int endday = (31-((((5*year)/4)+1)%7));
-      if (day < endday || (day == endday && hour < 1))
-      {
-        return true;
-      }
+      // Summer time has not ended yet
+      return true;
     }
-    else
-    {
-      return true;  
-    }
+    break;
+  case 11 ... 12: 
+    // November or December
+    return false;
+  default: 
+    // only for invalid month outside 1..12
+    return false;
   }
+  // Beginning of March or end of October
   return false;
+}
+void printDebug()
+{
+  // Debug time
+  Serial.print("Time:");
+  for (int i=0; i<4;i++)
+  {
+    for(int j=0; j<7;j++)
+    {
+     Serial.print(myDisplay.digits[i][j]); 
+    }
+    Serial.print(" ");
+  }
+  Serial.println("");
 }
