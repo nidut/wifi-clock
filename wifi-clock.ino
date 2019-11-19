@@ -14,9 +14,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include "wifi_credentials.h"
-// wifi_crendentials.h contains:
-//const char* ssid     = "*********";
-//const char* password = "*********";
+// modify wifi_crendentials_example.h and save it as wifi_credentials.h
 
 /* LED Strip */
 #define LED_PIN   D1
