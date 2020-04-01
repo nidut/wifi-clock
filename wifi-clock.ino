@@ -1,3 +1,11 @@
+#include <ESP8266WiFi.h>
+#include <FastLED.h>
+#include <TimeAlarms.h>
+#include <Time.h>
+#include <TimeLib.h>
+#include "NTPtimeESP.h"
+
+/* LED Display */
 // NEOPIXEL BEST PRACTICES for most reliable operation:
 // - Add 1000 uF CAPACITOR between NeoPixel strip's + and - connections.
 // - MINIMIZE WIRING LENGTH between microcontroller board and first pixel.
@@ -7,79 +15,46 @@
 // - When using a 3.3V microcontroller with a 5V-powered NeoPixel strip,
 //   a LOGIC-LEVEL CONVERTER on the data line is STRONGLY RECOMMENDED.
 // (Skipping these may work OK on your workbench but can fail in the field)
+#define NUM_LEDS 30
+#define DATA_PIN 1
+typedef uint32_t DIGIT[7];
+CRGB leds[NUM_LEDS];
+const DIGIT numbers[10] =
+  {
+    {1, 1, 1, 1, 1, 1, 0}, //0
+    {0, 1, 1, 0, 0, 0, 0}, //1
+    {1, 1, 0, 1, 1, 0, 1}, //2
+    {1, 1, 1, 1, 0, 0, 1}, //3
+    {0, 1, 1, 0, 0, 1, 1}, //4
+    {1, 0, 1, 1, 0, 1, 1}, //5
+    {1, 0, 1, 1, 1, 1, 1}, //6
+    {1, 1, 1, 0, 0, 0, 0}, //7
+    {1, 1, 1, 1, 1, 1, 1}, //8
+    {1, 1, 1, 1, 0, 1, 1}  //9
+  };
+DIGIT digits[4];
+char dots[2];
+const uint8_t digit_start_adress[4] = {0, 7, 16, 23};
+const uint8_t dot_start_adress[2] = {14, 15};
+time_t prevDisplay = 0; // when the digital clock was displayed
 
-#include <Adafruit_NeoPixel.h>
-#include <string.h>
-#include <ESP8266WiFi.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-// modify wifi_crendentials_example.h and save it as wifi_credentials.h
+/* WiFi */
 #include "wifi_credentials.h"
 
-/* LED Strip */
-#define LED_PIN D1
-#define LED_COUNT 30
-Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
-// Pixel type flags, add together as needed:
-//   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
-//   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
-//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
-//   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
-//   NEO_RGBW    Pixels are wired for RGBW bitstream (NeoPixel RGBW products)
-
-/* LED 7-segment Display */
-typedef uint32_t DIGIT[7];
-// display with 4 digits and two dots
-struct display
-{
-  DIGIT digits[4];
-  char dots[2];
-  int brightness = 50;
-  uint32_t color = COLOR_RED;
-  int updateRate = 500; // in ms
-} myDisplay;
-// define digits 0-9
-DIGIT numbers[10] =
-    {
-        {1, 1, 1, 1, 1, 1, 0}, //0
-        {0, 1, 1, 0, 0, 0, 0}, //1
-        {1, 1, 0, 1, 1, 0, 1}, //2
-        {1, 1, 1, 1, 0, 0, 1}, //3
-        {0, 1, 1, 0, 0, 1, 1}, //4
-        {1, 0, 1, 1, 0, 1, 1}, //5
-        {0, 0, 1, 1, 1, 1, 1}, //6
-        {1, 1, 1, 0, 0, 0, 0}, //7
-        {1, 1, 1, 1, 1, 1, 1}, //8
-        {1, 1, 1, 1, 0, 1, 1}  //9
-};
-
-/* predefined colors */
-const uint32_t COLOR_OFF = strip.Color(0, 0, 0);
-const uint32_t COLOR_RED = strip.Color(255, 0, 0);
-const uint32_t COLOR_GREEN = strip.Color(0, 255, 0);
-const uint32_t COLOR_BLUE = strip.Color(0, 0, 255);
-const uint32_t COLOR_WHITE = strip.Color(255, 255, 255);
-const uint32_t COLOR_MAGENTA = strip.Color(255, 0, 255);
-
-/* NTP Client */
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
-const int CET_OFFSET = 3600;
-const int CEST_OFFSET = 7200;
-int time_digits[4];
-int date_digits[4];
-int timeZoneUpdateRate = 3600; // in seconds
-
-uint32_t loop_cnt = 0;
+/* Software clock */
+strDateTime dateTime;
+#define DEBUG_ON
+NTPtime NTPde("europe.pool.ntp.org");
+time_t last_time_sync = 0;
+time_t time_sync_intervall = 10; //seconds
 
 void setup()
 {
-  /* Init LEDs */
-  strip.begin();
-  strip.show();  // Turn OFF all pixels ASAP
-
   /* Init Serial */
   Serial.begin(115200);
+
+  /* Init LED prevDisplay */
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 
   /* Init Wifi */
   Serial.print("Connecting to ");
@@ -87,187 +62,57 @@ void setup()
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
     Serial.print(".");
+    delay(500);
   }
-  Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
+  Serial.println("\nWiFi connected.");
+  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-
-  /* Init NTPClient */
-  timeClient.begin();
 }
 
 void loop()
 {
-  if (loop_cnt * myDisplay.updateRate / 1000 % timeZoneUpdateRate == 0)
+  /* Time Sync */
+  if (now() - last_time_sync > time_sync_intervall)
   {
-    updateTimeZone();
+    // first parameter: Time zone in floating point (for India); second parameter: 1 for European summer time; 2 for US daylight saving time; 0 for no DST adjustment; (contributed by viewwer, not tested by me)
+    dateTime = NTPde.getNTPtime(1.0, 1);
+    // check dateTime.valid before using the returned time
+    // Use "setSendInterval" or "setRecvTimeout" if required
+    if(dateTime.valid){
+      setTime(dateTime.hour,dateTime.minute,dateTime.second,dateTime.day,dateTime.month,dateTime.year); // Another way to set
+      last_time_sync = now();
+      Serial.println("time sync");
+    } 
   }
-  updateDateTime();
-  setTimeDisplay();
-  printDebug();
-  myDisplay.color = COLOR_RED;
-  myDisplay.brightness = 50;
-  writeDisplay(myDisplay);
-  delay(myDisplay.updateRate);
-  loop_cnt++;
+  /* Update LED Display */
+  if (now() != prevDisplay) { //update the display only if time has changed
+      prevDisplay = now();
+      setDisplay(hour()/10, hour()%10, minute()/10, minute()%10);
+      Serial.println("display update");
+  }      
 }
 
-void updateDateTime()
-{
-  while (!timeClient.update())
-  {
-    timeClient.forceUpdate();
-  }
-  String formattedDate = timeClient.getFormattedDate();
-  // The formattedDate comes with the following format:
-  // 2018-05-28T16:00:13Z
-  Serial.println(formattedDate);
-  // Extract date
-  date_digits[0] = formattedDate[8] - '0';
-  date_digits[1] = formattedDate[9] - '0';
-  date_digits[2] = formattedDate[5] - '0';
-  date_digits[3] = formattedDate[6] - '0';
-  // Extract time
-  time_digits[0] = formattedDate[11] - '0';
-  time_digits[1] = formattedDate[12] - '0';
-  time_digits[2] = formattedDate[14] - '0';
-  time_digits[3] = formattedDate[15] - '0';
-}
-void setTimeDisplay()
-{
-  // fill display object with time info
-  memcpy(myDisplay.digits[0], numbers[time_digits[0]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[1], numbers[time_digits[1]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[2], numbers[time_digits[2]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[3], numbers[time_digits[3]], sizeof(DIGIT));
-  myDisplay.dots[0] = 1;
-  myDisplay.dots[1] = 1;
-}
-void setDateDisplay()
-{
-  // fill display object with date info
-  memcpy(myDisplay.digits[0], numbers[date_digits[0]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[1], numbers[date_digits[1]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[2], numbers[date_digits[2]], sizeof(DIGIT));
-  memcpy(myDisplay.digits[3], numbers[date_digits[3]], sizeof(DIGIT));
-  myDisplay.dots[0] = 0;
-  myDisplay.dots[1] = 1;
-}
-uint32_t reduceBrightness(uint32_t color, uint8_t brightness)
-{
-  uint8_t r = (uint8_t)(color >> 16);
-  uint8_t g = (uint8_t)(color >> 8);
-  uint8_t b = (uint8_t)(color >> 0);
-  r = r * brightness / 255;
-  g = g * brightness / 255;
-  b = b * brightness / 255;
-  uint32_t new_color = strip.Color(r, g, b);
-  return new_color;
-}
-
-void writeDisplay(struct display myDisplay)
-{
-  strip.clear();
+void setDisplay(uint8_t digit_0, uint8_t digit_1, uint8_t digit_2, uint8_t digit_3){
+  uint8_t content[4] = {digit_0, digit_1, digit_2, digit_3};
+  uint32_t led_color;
   // Digits
-  for (int digit = 0; digit < 4; digit++)
-  {
-    for (int segment = 1; segment < 8; segment++)
+  for (int i = 0; i < 4; i++){
+    for (int led_segment = 0; led_segment < 7; led_segment++)
     {
-      if (myDisplay.digits[digit][segment - 1] > 0)
+      if (numbers[content[i]][led_segment] > 0)
       {
-        strip.setPixelColor(digit * 7 + segment - 1, reduceBrightness(myDisplay.color, myDisplay.brightness));
+        led_color = CRGB::Red;
       }
+      else
+      {
+        led_color = CRGB::Black;
+      }
+      leds[digit_start_adress[i] + led_segment] = led_color;
     }
   }
-  // Dots
-  for (int dot = 0; dot < 2; dot++)
-  {
-    if (myDisplay.dots[dot] > 0)
-    {
-      strip.setPixelColor(28 + dot, reduceBrightness(myDisplay.color, myDisplay.brightness));
-    }
-  }
-  strip.show();
-}
-
-void updateTimeZone()
-{
-  // check for summer time based on UTC
-  timeClient.setTimeOffset(0);
-  while (!timeClient.update())
-  {
-    timeClient.forceUpdate();
-  }
-  String utc_date = timeClient.getFormattedDate();
-  if (isEuropeanSummerTime(utc_date))
-  {
-    timeClient.setTimeOffset(CEST_OFFSET);
-  }
-  else
-  {
-    timeClient.setTimeOffset(CET_OFFSET);
-  }
-}
-
-bool isEuropeanSummerTime(String formattedDate)
-{
-  // check if Central European Summer Time or not
-  // input in UTC
-  // The formattedDate comes with the following format:
-  // 2018-05-28T16:00:13Z
-  int year = formattedDate.substring(0, 4).toInt();
-  int month = formattedDate.substring(5, 7).toInt();
-  int day = formattedDate.substring(8, 10).toInt();
-  int hour = formattedDate.substring(11, 13).toInt();
-  switch (month)
-  {
-  case 1 ... 2: // January or February
-    return false;
-  case 3: // March
-    int startday = (31 - ((((5 * year) / 4) + 4) % 7));
-    if (day > startday || (day == startday && hour >= 1))
-    {
-      return true; // Summer time has already started
-    }
-    else
-    {
-      return false;
-    }
-  case 4 ... 9: // April until September
-    return true;
-  case 10: // October
-    int endday = (31 - ((((5 * year) / 4) + 1) % 7));
-    if (day < endday || (day == endday && hour < 1))
-    {
-      return true; // Summer time has not ended yet
-    }
-    else
-    {
-      return false;
-    }
-  case 11 ... 12: // November or December
-    return false;
-  default: // invalid month outside 1..12
-    return false;
-  }
-  // Beginning of March or end of October
-  return false;
-}
-
-void printDebug()
-{
-  // Debug time
-  Serial.print("Time:");
-  for (int i = 0; i < 4; i++)
-  {
-    for (int j = 0; j < 7; j++)
-    {
-      Serial.print(myDisplay.digits[i][j]);
-    }
-    Serial.print(" ");
-  }
-  Serial.println("");
+  leds[dot_start_adress[0]] = CHSV(random8(),255,255);
+  leds[dot_start_adress[1]] = CHSV(random8(),255,255);
+  FastLED.setBrightness(30);
+  FastLED.show();
 }
