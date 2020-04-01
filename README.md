@@ -4,5 +4,5 @@ DIY project creating a wifi connected clock with seven segment look for the livi
 Based on:
 - NodeMCU board with ESP8266 controller
 - WS2812B LED strip
-- FastLED lib
-- NTPtimeESP lib
+- FastLED https://github.com/FastLED/FastLED
+- NTPtimeESP https://github.com/SensorsIot/NTPtimeESP
